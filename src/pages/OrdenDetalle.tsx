@@ -1,15 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import { ordenesCompraApi } from '@/services/api';
-import { formatCurrency, formatDate } from '@/utils/formatters';
+import { ordenesCompraApi, inventoryApi } from '@/services/api';
+import { formatCurrency } from '@/utils/formatters';
 import type { OrdenCompra } from '@/types';
+import { useNotifications } from '@/hooks/notifications';
 
 const OrdenDetalle: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [orden, setOrden] = useState<OrdenCompra | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savingEstado, setSavingEstado] = useState(false);
+  const [estadoLocal, setEstadoLocal] = useState<OrdenCompra['estado'] | ''>('');
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [estadoPendiente, setEstadoPendiente] = useState<OrdenCompra['estado'] | null>(null);
+  const { addNotification } = useNotifications();
 
   useEffect(() => {
     const fetchOrden = async () => {
@@ -26,6 +32,7 @@ const OrdenDetalle: React.FC = () => {
         
         if (ordenData) {
           setOrden(ordenData);
+          setEstadoLocal(ordenData.estado);
         } else {
           console.log('❌ No se obtuvo data de la orden');
           setError('Orden no encontrada');
@@ -103,8 +110,89 @@ const OrdenDetalle: React.FC = () => {
     }
   };
 
+  const estadosDisponibles: OrdenCompra['estado'][] = [
+    'PENDIENTE', 'APROBADA', 'RECHAZADA', 'ENTREGADA'
+  ];
+
+  const handleEstadoChange = async (nuevo: OrdenCompra['estado']) => {
+    if (!orden || savingEstado) return;
+    try {
+      setSavingEstado(true);
+      setEstadoLocal(nuevo);
+      const res = await ordenesCompraApi.updateEstado(orden.id, nuevo);
+      console.log('[DEBUG] Respuesta updateEstado:', res);
+      setOrden({ ...orden, estado: res.estado });
+      // Si la orden se marcó como ENTREGADA, ajustar inventario en servicio externo
+      if (res.estado === 'ENTREGADA') {
+        try {
+          const detalles = orden.detalles || [];
+          if (detalles.length === 0) {
+            addNotification('warning', `OC-${orden.id}: no hay detalles para ajustar inventario`);
+          } else {
+            const adjustResults = await Promise.allSettled(
+              detalles.map((d) =>
+                inventoryApi.adjust({
+                  id_producto: (d as any).producto_id ?? 0,
+                  cantidad: Number((d as any).cantidad ?? 0),
+                  motivo: `Compra recibida OC-${orden.id}`,
+                })
+              )
+            );
+            const failed = adjustResults.filter(r => r.status === 'rejected');
+            if (failed.length === 0) {
+              addNotification('success', `Inventario actualizado para OC-${orden.id}`);
+            } else if (failed.length < adjustResults.length) {
+              addNotification('warning', `Inventario parcialmente actualizado (${adjustResults.length - failed.length}/${adjustResults.length}) para OC-${orden.id}`);
+            } else {
+              addNotification('error', `No se pudo actualizar el inventario para OC-${orden.id}`);
+            }
+          }
+        } catch (invErr: any) {
+          console.error('Error al ajustar inventario:', invErr);
+          addNotification('error', `Error al ajustar inventario: ${invErr?.message || 'desconocido'}`);
+        }
+      }
+    } catch (e) {
+      setEstadoLocal(orden.estado);
+      console.error('Error actualizando estado:', e);
+      addNotification('error', 'No se pudo actualizar el estado. Intente más tarde.');
+    } finally {
+      setSavingEstado(false);
+      setShowConfirmModal(false);
+      setEstadoPendiente(null);
+    }
+  };
+
+  const onSelectEstado = (nuevo: OrdenCompra['estado']) => {
+  console.log('[DEBUG] onSelectEstado:', { nuevo, estadoLocal });
+  if (nuevo === estadoLocal) return;
+  setEstadoPendiente(nuevo);
+  setShowConfirmModal(true);
+  };
+
   return (
     <div className="space-y-6">
+      {/* Modal de confirmación de cambio de estado */}
+      {showConfirmModal && estadoPendiente && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <h2 className="text-lg font-semibold mb-2">Confirmar cambio de estado</h2>
+            <p className="mb-4">¿Está seguro que desea cambiar el estado de la orden a <span className="font-bold">{estadoPendiente}</span>?</p>
+            <div className="flex justify-end space-x-2">
+              <button
+                className="px-4 py-2 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                onClick={() => { setShowConfirmModal(false); setEstadoPendiente(null); }}
+                disabled={savingEstado}
+              >Cancelar</button>
+              <button
+                className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+                onClick={() => estadoPendiente && handleEstadoChange(estadoPendiente)}
+                disabled={savingEstado}
+              >Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
@@ -124,10 +212,33 @@ const OrdenDetalle: React.FC = () => {
             </p>
           </div>
         </div>
-        <span className={`inline-flex px-3 py-1 text-sm font-semibold rounded-full ${getEstadoColor(orden.estado)}`}>
-          {orden.estado}
-        </span>
+        <div className="flex items-center space-x-3">
+          <span className={`inline-flex px-3 py-1 text-sm font-semibold rounded-full ${getEstadoColor(orden.estado)}`}>
+            {orden.estado}
+          </span>
+          <label className="text-sm text-gray-600">Cambiar estado:</label>
+          <select
+            className="border rounded-md px-2 py-1 text-sm"
+            value={estadoLocal}
+            onChange={(e) => onSelectEstado(e.target.value as OrdenCompra['estado'])}
+            disabled={savingEstado || orden.estado === 'ENTREGADA' || orden.estado === 'RECHAZADA'}
+          >
+            {estadosDisponibles.map((e) => (
+              <option key={e} value={e}>{e}</option>
+            ))}
+          </select>
+        </div>
       </div>
+      {(orden.estado === 'ENTREGADA') && (
+        <div className="mt-2 text-sm text-blue-700 bg-blue-50 rounded px-3 py-2">
+          No es posible cambiar el estado de una orden <b>ENTREGADA</b>.
+        </div>
+      )}
+      {(orden.estado === 'RECHAZADA') && (
+        <div className="mt-2 text-sm text-red-700 bg-red-50 rounded px-3 py-2">
+          No es posible cambiar el estado de una orden <b>RECHAZADA</b>.
+        </div>
+      )}
 
       {/* Order Info */}
       <div className="bg-white shadow rounded-lg">
@@ -162,6 +273,13 @@ const OrdenDetalle: React.FC = () => {
                 <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getEstadoColor(orden.estado)}`}>
                   {orden.estado}
                 </span>
+                {orden.fecha_actualizacion && (
+                  <div className="text-xs text-gray-500 mt-1">
+                    <span>Fecha de declaración: {new Date(orden.fecha_actualizacion).toLocaleDateString('es-ES', {
+                      year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                    })}</span>
+                  </div>
+                )}
               </dd>
             </div>
             <div>
@@ -303,6 +421,16 @@ const OrdenDetalle: React.FC = () => {
                 <div>
                   <dt className="text-sm font-medium text-gray-500">Dirección</dt>
                   <dd className="mt-1 text-sm text-gray-900">{orden.proveedor.direccion}</dd>
+                </div>
+              )}
+              {(orden.estado === 'ENTREGADA') && (
+                <div className="mt-2 text-sm text-blue-700 bg-blue-50 rounded px-3 py-2">
+                  No es posible cambiar el estado de una orden <b>ENTREGADA</b>.
+                </div>
+              )}
+              {(orden.estado === 'RECHAZADA') && (
+                <div className="mt-2 text-sm text-red-700 bg-red-50 rounded px-3 py-2">
+                  No es posible cambiar el estado de una orden <b>RECHAZADA</b>.
                 </div>
               )}
             </dl>

@@ -10,6 +10,7 @@ export interface ApiResponse<T = any> {
 export interface Proveedor {
   id: number;
   nombre: string;
+  nit?: string;
   email?: string;
   telefono?: string;
   direccion?: string;
@@ -24,6 +25,7 @@ export interface Proveedor {
 
 export interface CreateProveedorData {
   nombre: string;
+  nit?: string;
   contacto?: string;
   email?: string;
   telefono?: string;
@@ -45,6 +47,7 @@ export interface OrdenCompra {
   total?: number;
   proveedor?: Proveedor;
   detalles?: DetalleOrden[];
+  fecha_actualizacion?: string;
 }
 
 export interface DetalleOrden {

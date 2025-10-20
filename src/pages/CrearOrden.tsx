@@ -2,12 +2,15 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeftIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useProveedores, useOrdenesCompra } from '@/hooks';
+import { tareasApi } from '@/services/api';
+import { useNotifications } from '@/hooks/notifications';
 import { CreateOrdenCompraData, DetalleOrdenInput } from '@/types';
 
 const CrearOrden: React.FC = () => {
   const navigate = useNavigate();
   const { proveedores } = useProveedores();
   const { createOrden } = useOrdenesCompra();
+  const { addNotification } = useNotifications();
   
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState<CreateOrdenCompraData>({
@@ -61,10 +64,35 @@ const CrearOrden: React.FC = () => {
     setLoading(true);
     try {
       const nuevaOrden = await createOrden(formData);
+      // Tras crear la orden, crear una tarea en el servicio externo (no bloquear navegación)
+      try {
+        const titulo = `OC-${nuevaOrden.id} creada`;
+        const descripcion = `Orden de compra #${nuevaOrden.id} para proveedor ${nuevaOrden.proveedor?.nombre || nuevaOrden.proveedor_id}. Total: ${calculateTotal().toFixed(2)}`;
+        // fecha_limite: si el usuario eligió fecha_entrega_esperada, usar las 12:00; si no, 3 días después
+        const fecha = formData.fecha_entrega_esperada
+          ? `${formData.fecha_entrega_esperada} 12:00:00`
+          : (() => {
+              const d = new Date();
+              d.setDate(d.getDate() + Number(import.meta.env.VITE_TAREAS_DEFAULT_DUE_DAYS || 3));
+              const yyyy = d.getFullYear();
+              const mm = String(d.getMonth() + 1).padStart(2, '0');
+              const dd = String(d.getDate()).padStart(2, '0');
+              return `${yyyy}-${mm}-${dd} 12:00:00`;
+            })();
+        const estado = 'Pendiente';
+        const prioridad = (import.meta.env.VITE_TAREAS_DEFAULT_PRIORITY as string) || 'Alta';
+        const asignado_a = (import.meta.env.VITE_TAREAS_DEFAULT_ASSIGNEE as string) || '1';
+
+        await tareasApi.create({ titulo, descripcion, fecha_limite: fecha, estado, prioridad, asignado_a });
+        addNotification('success', 'Tarea creada', `Se generó una tarea para la orden OC-${nuevaOrden.id}`);
+      } catch (taskErr: any) {
+        console.error('No se pudo crear la tarea externa:', taskErr);
+        addNotification('warning', 'Tarea no creada', 'La orden fue creada, pero la tarea externa falló');
+      }
       navigate(`/ordenes-compra/${nuevaOrden.id}`);
     } catch (error) {
       console.error('Error al crear orden:', error);
-      alert('Error al crear la orden');
+      addNotification('error', 'Error al crear la orden');
     } finally {
       setLoading(false);
     }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { NotificationsToaster } from '@/hooks/notifications';
 import { 
   HomeIcon, 
   UserGroupIcon, 
@@ -26,6 +27,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Global notifications */}
+      <NotificationsToaster />
       {/* Navbar */}
       <nav className="bg-white shadow-lg">
         <div className="max-w-7xl mx-auto px-4">

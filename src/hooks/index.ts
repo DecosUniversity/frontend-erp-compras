@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { proveedoresApi, ordenesCompraApi, productosApi } from '@/services/api';
+import { proveedoresApi, ordenesCompraApi, productosApi, crmApi, CrmProveedorPayload } from '@/services/api';
 import type {
   Proveedor,
   CreateProveedorData,
   OrdenCompra,
   CreateOrdenCompraData,
-  // Producto, // Remove or comment out if not exported from '@/types'
+  Producto,
 } from '@/types';
 
 // Hook para manejar proveedores
@@ -27,13 +27,51 @@ export const useProveedores = () => {
     }
   };
 
-  const createProveedor = async (data: CreateProveedorData) => {
+  const createProveedor = async (data: CreateProveedorData, opts?: { contactoPrincipal?: string }) => {
     setIsLoading(true);
     setError(null);
     try {
+      // 1. Crear proveedor local
       const newProveedor = await proveedoresApi.create(data);
       setProveedores((prev) => [...prev, newProveedor]);
-      return newProveedor;
+
+      // 2. Crear proveedor en CRM
+      const crmPayload: CrmProveedorPayload = {
+        name: data.nombre,
+        email: data.email || '',
+        phone: data.telefono || '',
+        nit: data.nit ? Number(data.nit) : 0,
+      };
+      if (opts?.contactoPrincipal) {
+        crmPayload.contactoPrincipal = opts.contactoPrincipal;
+      } else {
+        crmPayload.contacto = {
+          primerNombre: data.contacto || '',
+          direccion: data.direccion || '',
+          telefono: data.telefono || '',
+          correo: data.email || '',
+          // Puedes agregar más campos si el formulario los tiene
+        };
+      }
+      let crmError: string | null = null;
+      try {
+        await crmApi.createProveedor(crmPayload);
+      } catch (err: any) {
+        // Extraer mensaje de error del CRM
+        console.error('Error creando proveedor en CRM:', err);
+        if (err?.response?.data?.errors) {
+          const errors = err.response.data.errors;
+          const errorMessages = Object.values(errors).flat();
+          crmError = errorMessages.join(', ');
+        } else if (err?.response?.data?.title) {
+          crmError = err.response.data.title;
+        } else if (err?.message) {
+          crmError = err.message;
+        } else {
+          crmError = 'Error desconocido al crear en CRM';
+        }
+      }
+      return { proveedor: newProveedor, crmError };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al crear proveedor';
       setError(errorMessage);
@@ -150,7 +188,7 @@ export const useOrdenesCompra = () => {
       await ordenesCompraApi.update(id, data);
       setOrdenes((prev) =>
         prev.map((orden) =>
-          orden.id_orden_compra === id ? { ...orden, ...data } : orden
+          (orden as any).id_orden_compra === id ? { ...orden, ...data } : orden
         )
       );
     } catch (err) {
@@ -167,7 +205,7 @@ export const useOrdenesCompra = () => {
     setError(null);
     try {
       await ordenesCompraApi.delete(id);
-      setOrdenes((prev) => prev.filter((orden) => orden.id_orden_compra !== id));
+      setOrdenes((prev) => prev.filter((orden) => (orden as any).id_orden_compra !== id));
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error al eliminar orden de compra';
       setError(errorMessage);

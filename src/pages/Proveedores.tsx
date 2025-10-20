@@ -1,14 +1,18 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { PlusIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useProveedores } from '@/hooks';
+import { useNotifications } from '@/hooks/notifications';
+import { crmApi } from '@/services/api';
 import { Proveedor } from '@/types';
 
 const Proveedores: React.FC = () => {
   const { proveedores, isLoading, createProveedor, updateProveedor, deleteProveedor } = useProveedores();
+  const { addNotification } = useNotifications();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProveedor, setEditingProveedor] = useState<Proveedor | null>(null);
   const [formData, setFormData] = useState({
     nombre: '',
+    nit: '',
     contacto: '',
     email: '',
     telefono: '',
@@ -17,21 +21,52 @@ const Proveedores: React.FC = () => {
     pais: '',
     estado: 'Activo'
   });
+  const [prospectos, setProspectos] = useState<Array<{ id: string; nombre: string; email?: string; telefono?: string; direccion?: string; ciudad?: string; pais?: string }>>([]);
+  const [prospectoSeleccionado, setProspectoSeleccionado] = useState<string | ''>('');
+  const [busquedaProspecto, setBusquedaProspecto] = useState('');
+  const [loadingProspectos, setLoadingProspectos] = useState(false);
+
+  const cargarProspectos = async (q?: string) => {
+    try {
+      setLoadingProspectos(true);
+      const data = await crmApi.getProspectos({ limit: 50, search: q });
+      setProspectos(data);
+    } catch (e) {
+      console.error('Error cargando prospectos CRM:', e);
+      setProspectos([]);
+    } finally {
+      setLoadingProspectos(false);
+    }
+  };
+
+  useEffect(() => { if (isModalOpen && !editingProveedor) cargarProspectos(); }, [isModalOpen, editingProveedor]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     try {
       if (editingProveedor) {
         await updateProveedor(editingProveedor.id, formData);
+        addNotification('success', 'Proveedor actualizado', 'El proveedor fue actualizado correctamente.');
       } else {
-        await createProveedor(formData);
+        // Si hay un prospecto seleccionado, pásalo como contactoPrincipal
+        let opts = {};
+        if (prospectoSeleccionado) {
+          opts = { contactoPrincipal: prospectoSeleccionado };
+        }
+        
+        const result = await createProveedor(formData, opts);
+        
+          if (result.crmError) {
+            alert(`✅ Proveedor creado en la base de datos local.\n\n⚠️ Error en CRM: ${result.crmError}\n\nEl proveedor se guardó localmente pero no se pudo sincronizar con el CRM.`);
+          } else {
+            alert('✅ Proveedor creado exitosamente tanto en la base de datos local como en el CRM.');
+          }
       }
-      
       setIsModalOpen(false);
       setEditingProveedor(null);
       setFormData({ 
         nombre: '', 
+        nit: '',
         contacto: '',
         email: '', 
         telefono: '', 
@@ -40,7 +75,9 @@ const Proveedores: React.FC = () => {
         pais: '',
         estado: 'Activo'
       });
+      setProspectoSeleccionado('');
     } catch (error) {
+      addNotification('error', 'Error al guardar proveedor', 'Ocurrió un error al guardar el proveedor.');
       console.error('Error al guardar proveedor:', error);
     }
   };
@@ -49,6 +86,7 @@ const Proveedores: React.FC = () => {
     setEditingProveedor(proveedor);
     setFormData({
       nombre: proveedor.nombre,
+      nit: proveedor.nit || '',
       contacto: proveedor.contacto || '',
       email: proveedor.email || '',
       telefono: proveedor.telefono || '',
@@ -73,16 +111,18 @@ const Proveedores: React.FC = () => {
 
   const openNewModal = () => {
     setEditingProveedor(null);
-    setFormData({ 
-      nombre: '', 
-      contacto: '',
-      email: '', 
-      telefono: '', 
-      direccion: '',
-      ciudad: '',
-      pais: '',
-      estado: 'Activo'
-    });
+      setFormData({ 
+        nombre: '', 
+        nit: '',
+        contacto: '',
+        email: '', 
+        telefono: '', 
+        direccion: '',
+        ciudad: '',
+        pais: '',
+        estado: 'Activo'
+      });
+    setProspectoSeleccionado('');
     setIsModalOpen(true);
   };
 
@@ -203,10 +243,55 @@ const Proveedores: React.FC = () => {
               <form onSubmit={handleSubmit}>
                 <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                   <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
-                    {editingProveedor ? 'Editar Proveedor' : 'Nuevo Proveedor'}
+                    {editingProveedor ? 'Editar Proveedor' : 'Nuevo Proveedor (desde Prospecto)'}
                   </h3>
                   
                   <div className="space-y-4">
+                    {!editingProveedor && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Seleccionar Prospecto *</label>
+                        <div className="flex items-center space-x-2 mt-1">
+                          <input
+                            type="text"
+                            placeholder="Buscar por nombre o email"
+                            value={busquedaProspecto}
+                            onChange={(e) => setBusquedaProspecto(e.target.value)}
+                            className="flex-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                          />
+                          <button type="button" onClick={() => cargarProspectos(busquedaProspecto)} className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 text-sm">Buscar</button>
+                        </div>
+                        <select
+                          required
+                          value={prospectoSeleccionado}
+                          onChange={(e) => {
+                            const idSel = e.target.value;
+                            setProspectoSeleccionado(idSel || '');
+                            const p = prospectos.find(p => p.id === idSel);
+                            if (p) {
+                              setFormData(prev => ({
+                                // nombre no se autollenará; debe asignarse manualmente por el usuario
+                                nombre: prev.nombre || '',
+                                nit: prev.nit || '',
+                                contacto: p.nombre || prev.contacto || '',
+                                email: p.email || '',
+                                telefono: p.telefono || '',
+                                direccion: p.direccion || '',
+                                ciudad: p.ciudad || '',
+                                pais: p.pais || '',
+                                estado: 'Activo'
+                              }));
+                            }
+                          }}
+                          className="mt-2 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          <option value="">{loadingProspectos ? 'Cargando...' : 'Seleccione un prospecto'}</option>
+                          {prospectos.map(p => (
+                            <option key={p.id} value={p.id}>{p.nombre} {p.email ? `- ${p.email}` : ''}</option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">Solo se pueden crear proveedores a partir de contactos Prospecto del CRM.</p>
+                      </div>
+                    )}
                     <div>
                       <label className="block text-sm font-medium text-gray-700">
                         Nombre *
@@ -216,6 +301,18 @@ const Proveedores: React.FC = () => {
                         required
                         value={formData.nombre}
                         onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
+                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        NIT *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={formData.nit}
+                        onChange={(e) => setFormData({ ...formData, nit: e.target.value })}
                         className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
                       />
                     </div>
@@ -299,7 +396,7 @@ const Proveedores: React.FC = () => {
                     type="submit"
                     className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:ml-3 sm:w-auto sm:text-sm"
                   >
-                    {editingProveedor ? 'Actualizar' : 'Crear'}
+                    {editingProveedor ? 'Actualizar' : 'Crear desde Prospecto'}
                   </button>
                   <button
                     type="button"

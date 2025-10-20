@@ -62,9 +62,19 @@ Frontend/
 
 ## 🔗 Configuración de API
 
-El frontend está configurado para conectarse a la API desplegada en Railway:
-- **URL de la API:** `https://proyecto-analisis-production.up.railway.app`
-- **Proxy configurado** en `vite.config.ts` para desarrollo local
+El frontend está configurado para conectarse a la API del backend y al CRM externo:
+
+- Backend
+   - URL de la API (prod): `https://erpcompras-production.up.railway.app/api`
+   - Proxy configurado en `vite.config.ts` para desarrollo local
+   - Puedes sobrescribir con `VITE_API_URL`
+
+- CRM Externo (consumido directamente desde el frontend)
+   - Configurar variables en `.env` (ver `.env.example`):
+      - `VITE_CRM_API_URL` (requerido) – Base URL del CRM, por ejemplo `https://crm.tu-dominio.com/api`
+      - `VITE_CRM_API_KEY` (opcional) – Token Bearer si el CRM lo requiere
+      - `VITE_CRM_CONTACTS_PATH` (opcional) – Ruta del recurso de contactos, por defecto `/contactos`
+   - El frontend solicitará contactos de tipo Prospecto pasando `tipo=PROSPECTO` y soporte para `q` (búsqueda), `page` y `limit` si están disponibles
 
 ## 📋 Funcionalidades
 
@@ -79,6 +89,7 @@ El frontend está configurado para conectarse a la API desplegada en Railway:
 - ✅ Crear nuevo proveedor
 - ✅ Editar proveedor existente
 - ✅ Eliminar proveedor
+- ✅ Crear proveedor desde contacto Prospecto del CRM (selección directa desde el frontend)
 
 ### Gestión de Órdenes de Compra
 - ✅ Listar todas las órdenes
