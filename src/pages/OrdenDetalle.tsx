@@ -23,19 +23,52 @@ const OrdenDetalle: React.FC = () => {
   const handleDownloadPDF = () => {
     if (!orden) return;
     const doc = new jsPDF();
-    doc.setFontSize(16);
+    // Título principal
+    doc.setFontSize(18);
     doc.text('Orden de Compra', 14, 15);
     doc.setFontSize(12);
-    doc.text(`ID: ${orden.id || '-'}`, 14, 25);
-    doc.text(`Proveedor: ${orden.proveedor?.nombre || '-'}`, 14, 32);
-    doc.text(`Fecha: ${orden.fecha_orden ? new Date(orden.fecha_orden).toLocaleDateString('es-ES') : '-'}`, 14, 39);
+    // Información de la orden
+  doc.setFont('helvetica', 'bold');
+  doc.text('Datos de la Orden', 14, 25);
+  doc.setFont('helvetica', 'normal');
+    doc.text(`ID de Orden: #${orden.id || '-'}`, 14, 32);
+    doc.text(`Fecha de Orden: ${orden.fecha_orden ? new Date(orden.fecha_orden).toLocaleDateString('es-ES') : '-'}`, 14, 39);
     doc.text(`Estado: ${orden.estado || '-'}`, 14, 46);
-    doc.text(`Total: $${orden.total || '-'}`, 14, 53);
+    let y = 53;
+    if (orden.fecha_entrega_esperada) {
+      doc.text(`Fecha de Entrega Esperada: ${new Date(orden.fecha_entrega_esperada).toLocaleDateString('es-ES')}`, 14, y);
+      y += 7;
+    }
+    doc.text(`Total: $${orden.total || '-'}`, 14, y);
+
+    // Información del proveedor
+    let proveedorY = y + 9;
+    if (orden.proveedor) {
+  doc.setFont('helvetica', 'bold');
+  doc.text('Información del Proveedor', 14, proveedorY);
+  doc.setFont('helvetica', 'normal');
+      proveedorY += 7;
+      doc.text(`Nombre: ${orden.proveedor.nombre || '-'}`, 14, proveedorY);
+      proveedorY += 7;
+      if (orden.proveedor.email) {
+        doc.text(`Email: ${orden.proveedor.email}`, 14, proveedorY);
+        proveedorY += 7;
+      }
+      if (orden.proveedor.telefono) {
+        doc.text(`Teléfono: ${orden.proveedor.telefono}`, 14, proveedorY);
+        proveedorY += 7;
+      }
+      if (orden.proveedor.direccion) {
+        doc.text(`Dirección: ${orden.proveedor.direccion}`, 14, proveedorY);
+        proveedorY += 7;
+      }
+    }
 
     // Tabla de productos
+    let startY = proveedorY + 5;
     if (orden.detalles && Array.isArray(orden.detalles)) {
       autoTable(doc, {
-        startY: 60,
+        startY,
         head: [['Producto ID', 'Cantidad', 'Precio Unitario', 'Subtotal', 'Impuestos', 'Total']],
         body: orden.detalles.map((item: any) => [
           item.producto_id,
@@ -45,6 +78,9 @@ const OrdenDetalle: React.FC = () => {
           `$${item.impuestos?.toFixed ? item.impuestos.toFixed(2) : (item.impuestos || 0)}`,
           `$${item.total?.toFixed ? item.total.toFixed(2) : (item.total || item.subtotal)}`
         ]),
+        styles: { fontSize: 10 },
+        headStyles: { fillColor: [59, 130, 246] }, // azul similar a tailwind
+        alternateRowStyles: { fillColor: [245, 245, 245] },
       });
     }
 
