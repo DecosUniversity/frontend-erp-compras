@@ -628,7 +628,12 @@ export const inventoryApi = {
 };
 
 // Servicio de Tareas externo (creación de tareas)
-const TAREAS_BASE_URL = import.meta.env.VITE_TAREAS_API_URL || 'https://exclousit.up.railway.app';
+// En desarrollo usa el proxy de Vite '/tareas-api', en producción la URL completa
+const TAREAS_BASE_URL = import.meta.env.VITE_TAREAS_API_URL || (
+  process.env.NODE_ENV === 'development' 
+    ? '/tareas-api'  // Usa el proxy en desarrollo
+    : 'https://exclousit.up.railway.app'
+);
 const tareasClient = axios.create({
   baseURL: TAREAS_BASE_URL,
   timeout: 12000,
@@ -644,8 +649,74 @@ export const tareasApi = {
     prioridad?: string;
     asignado_a?: string | number;
   }) => {
-    const resp = await tareasClient.post('/api/tareas', payload);
+    const resp = await tareasClient.post('/tareas', payload);
     return resp.data;
+  },
+
+  // Actualizar estado de una tarea existente
+  updateEstado: async (tareaId: number | string, estado: 'Pendiente' | 'En Progreso' | 'Completado' | 'Completada') => {
+    const resp = await tareasClient.put(`/tareas/${tareaId}`, { estado });
+    return resp.data;
+  },
+
+  // Obtener todas las tareas y buscar por título (filtro en cliente)
+  findByTitulo: async (titulo: string) => {
+    try {
+      const resp = await tareasClient.get('/tareas');
+      
+      // Intentar extraer el array de tareas de diferentes estructuras posibles
+      let tareas: any[] = [];
+      if (Array.isArray(resp.data)) {
+        tareas = resp.data;
+      } else if (resp.data?.data && Array.isArray(resp.data.data)) {
+        tareas = resp.data.data;
+      } else if (resp.data?.tareas && Array.isArray(resp.data.tareas)) {
+        tareas = resp.data.tareas;
+      } else {
+        console.warn('Estructura de respuesta no reconocida:', resp.data);
+        return null;
+      }
+      
+      // Buscar la tarea que coincida con el título exacto (case-insensitive)
+      const tareaEncontrada = tareas.find((t: any) => {
+        const tituloTarea = t.titulo || t.title || t.nombre || '';
+        return tituloTarea.toLowerCase() === titulo.toLowerCase();
+      });
+      
+      if (tareaEncontrada) {
+        console.log('✅ Tarea encontrada:', tareaEncontrada);
+      } else {
+        console.log('⚠️ No se encontró tarea con título:', titulo, '(total tareas:', tareas.length, ')');
+      }
+      
+      return tareaEncontrada || null;
+    } catch (e: any) {
+      console.error('❌ Error al buscar tarea por título:', {
+        message: e?.message,
+        status: e?.response?.status,
+        statusText: e?.response?.statusText,
+        data: e?.response?.data
+      });
+      return null;
+    }
+  },
+
+  // Método de diagnóstico para verificar conectividad con el API de tareas
+  testConnection: async () => {
+    try {
+      console.log('🔍 Probando conexión con API de tareas...');
+      const resp = await tareasClient.get('/tareas');
+      console.log('✅ Respuesta del API de tareas:', resp.data);
+      return { success: true, data: resp.data };
+    } catch (e: any) {
+      console.error('❌ Error de conexión con API de tareas:', {
+        message: e?.message,
+        status: e?.response?.status,
+        url: e?.config?.url,
+        baseURL: e?.config?.baseURL
+      });
+      return { success: false, error: e };
+    }
   },
 };
 

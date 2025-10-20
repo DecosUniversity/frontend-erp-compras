@@ -20,6 +20,14 @@ export default defineConfig({
         secure: true,
         rewrite: (path) => path.replace(/^\/api/, '/api'),
       },
+      // Proxy dedicado para el servicio de tareas externo durante desarrollo
+      '/tareas-api': {
+        target: 'https://exclousit.up.railway.app',
+        changeOrigin: true,
+        secure: true,
+        // '/tareas-api/*' -> 'https://exclousit.up.railway.app/api/*'
+        rewrite: (path) => path.replace(/^\/tareas-api/, '/api'),
+      },
     },
   },
   build: {

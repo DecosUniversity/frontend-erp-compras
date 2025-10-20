@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import { ordenesCompraApi, inventoryApi } from '@/services/api';
+import { ordenesCompraApi, inventoryApi, tareasApi } from '@/services/api';
 import { formatCurrency } from '@/utils/formatters';
 import type { OrdenCompra } from '@/types';
 import { useNotifications } from '@/hooks/notifications';
@@ -16,6 +18,38 @@ const OrdenDetalle: React.FC = () => {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [estadoPendiente, setEstadoPendiente] = useState<OrdenCompra['estado'] | null>(null);
   const { addNotification } = useNotifications();
+
+  // Función para generar PDF básico
+  const handleDownloadPDF = () => {
+    if (!orden) return;
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text('Orden de Compra', 14, 15);
+    doc.setFontSize(12);
+    doc.text(`ID: ${orden.id || '-'}`, 14, 25);
+    doc.text(`Proveedor: ${orden.proveedor?.nombre || '-'}`, 14, 32);
+    doc.text(`Fecha: ${orden.fecha_orden ? new Date(orden.fecha_orden).toLocaleDateString('es-ES') : '-'}`, 14, 39);
+    doc.text(`Estado: ${orden.estado || '-'}`, 14, 46);
+    doc.text(`Total: $${orden.total || '-'}`, 14, 53);
+
+    // Tabla de productos
+    if (orden.detalles && Array.isArray(orden.detalles)) {
+      autoTable(doc, {
+        startY: 60,
+        head: [['Producto ID', 'Cantidad', 'Precio Unitario', 'Subtotal', 'Impuestos', 'Total']],
+        body: orden.detalles.map((item: any) => [
+          item.producto_id,
+          item.cantidad,
+          `$${item.precio_unitario?.toFixed ? item.precio_unitario.toFixed(2) : item.precio_unitario}`,
+          `$${item.subtotal?.toFixed ? item.subtotal.toFixed(2) : item.subtotal}`,
+          `$${item.impuestos?.toFixed ? item.impuestos.toFixed(2) : (item.impuestos || 0)}`,
+          `$${item.total?.toFixed ? item.total.toFixed(2) : (item.total || item.subtotal)}`
+        ]),
+      });
+    }
+
+    doc.save(`orden_compra_${orden.id || ''}.pdf`);
+  };
 
   useEffect(() => {
     const fetchOrden = async () => {
@@ -122,6 +156,43 @@ const OrdenDetalle: React.FC = () => {
       const res = await ordenesCompraApi.updateEstado(orden.id, nuevo);
       console.log('[DEBUG] Respuesta updateEstado:', res);
       setOrden({ ...orden, estado: res.estado });
+      
+      // Actualizar estado de la tarea asociada según el mapeo:
+      // APROBADA -> 'En Progreso'
+      // RECHAZADA o ENTREGADA -> 'Completada'
+      try {
+        let estadoTarea: 'En Progreso' | 'Completada' | null = null;
+        if (res.estado === 'APROBADA') {
+          estadoTarea = 'En Progreso';
+        } else if (res.estado === 'RECHAZADA' || res.estado === 'ENTREGADA') {
+          estadoTarea = 'Completada';
+        }
+
+        if (estadoTarea) {
+          // Buscar la tarea por título (OC-{id} creada)
+          const titulo = `OC-${orden.id} creada`;
+          console.log('🔍 Buscando tarea con título:', titulo);
+          
+          const tareaResult = await tareasApi.findByTitulo(titulo);
+          
+          if (tareaResult && (tareaResult.id || tareaResult.id_tarea)) {
+            const tareaId = tareaResult.id || tareaResult.id_tarea;
+            console.log('✅ Actualizando tarea ID:', tareaId, 'a estado:', estadoTarea);
+            await tareasApi.updateEstado(tareaId, estadoTarea);
+            addNotification('success', `Tarea actualizada a "${estadoTarea}"`);
+          } else {
+            console.warn('⚠️ No se encontró la tarea asociada a la orden. Puede que no se haya creado o el título no coincida.');
+            // No mostrar notificación de error al usuario, solo log para debugging
+          }
+        }
+      } catch (tareaErr: any) {
+        console.error('❌ Error al actualizar tarea:', tareaErr);
+        // Solo mostrar warning si fue un error de red/servidor, no si simplemente no existe la tarea
+        if (tareaErr?.response?.status >= 500) {
+          addNotification('warning', 'El servicio de tareas no está disponible');
+        }
+      }
+
       // Si la orden se marcó como ENTREGADA, ajustar inventario en servicio externo
       if (res.estado === 'ENTREGADA') {
         try {
@@ -172,6 +243,13 @@ const OrdenDetalle: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Botón para descargar PDF */}
+      <button
+        onClick={handleDownloadPDF}
+        className="bg-blue-600 text-white px-4 py-2 rounded mb-4 hover:bg-blue-700"
+      >
+        Descargar PDF
+      </button>
       {/* Modal de confirmación de cambio de estado */}
       {showConfirmModal && estadoPendiente && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
